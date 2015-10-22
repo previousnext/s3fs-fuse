@@ -24,5 +24,4 @@
 /test/Makefile
 /test/Makefile.in
 /test/*.log
-.bzr
-trunk
+.git
