@@ -4,3 +4,6 @@
 	dh $@ --with autoreconf --parallel
 
 override_dh_auto_test:
+
+override_dh_auto_configure:
+	dh_auto_configure $@ -- --with-gnutls
