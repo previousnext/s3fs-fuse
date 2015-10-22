@@ -1,6 +1,6 @@
 Source: s3fs-fuse
 Priority: optional
-Maintainer: Harald Sitter <sitter@kde.org>
+Maintainer: Peter Lieverdink <ubuntu@cafuego.net>
 Build-Depends: debhelper (>= 9),
                dh-autoreconf,
                autotools-dev,
