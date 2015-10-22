@@ -1,0 +1,4 @@
+version=3
+
+opts=filenamemangle=s/.+\/v?(\d\S*)\.tar\.gz/$1\.tar\.gz/ \
+  https://github.com/s3fs-fuse/s3fs-fuse/tags .*/v?(\d\S*)\.tar\.gz

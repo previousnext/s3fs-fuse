@@ -1,0 +1,19 @@
+Source: s3fs-fuse
+Priority: optional
+Maintainer: Harald Sitter <sitter@kde.org>
+Build-Depends: debhelper (>= 9),
+               dh-autoreconf,
+               autotools-dev,
+               libcurl4-openssl-dev,
+               libxml2-dev,
+               libfuse-dev,
+               pkg-config
+Standards-Version: 3.9.6
+Section: libs
+
+Package: s3fs-fuse
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: s3fs allows you to mount an S3 bucket via FUSE.
+ s3fs preserves the native object format for files, allowing use of
+ other tools like s3cmd.

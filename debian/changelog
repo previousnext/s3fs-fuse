@@ -1,0 +1,5 @@
+s3fs-fuse (1.79) trusty; urgency=medium
+
+  * Current release.
+
+ -- Peter Lieverdink <ubuntu@cafuego.net>  Thu, 22 Oct 2015 11:31:32 +1000

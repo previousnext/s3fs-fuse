@@ -1,0 +1,6 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with autoreconf --parallel
+
+override_dh_auto_test:
