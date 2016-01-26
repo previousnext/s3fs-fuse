@@ -1,3 +1,9 @@
+s3fs-fuse (1.79-1) trusty; urgency=medium
+
+  * Merge upstream changes.
+
+ -- Peter Lieverdink <ubuntu@cafuego.net>  Wed, 27 Jan 2016 09:13:48 +1000
+
 s3fs-fuse (1.79) trusty; urgency=medium
 
   * Current release.
