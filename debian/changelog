@@ -1,3 +1,9 @@
+s3fs-fuse (1.79.1) trusty; urgency=medium
+
+  * Bump the version properly, I hope.
+
+ -- Peter Lieverdink <ubuntu@cafuego.net>  Wed, 27 Jan 2016 09:58:34 +1000
+
 s3fs-fuse (1.79-2) trusty; urgency=medium
 
   * Add a build-dependency on libgcrypt-dev.
