@@ -1,3 +1,9 @@
+s3fs-fuse (1.79-2) trusty; urgency=medium
+
+  * Add a build-dependency on libgcrypt-dev.
+
+ -- Peter Lieverdink <ubuntu@cafuego.net>  Wed, 27 Jan 2016 09:22:04 +1000
+
 s3fs-fuse (1.79-1) trusty; urgency=medium
 
   * Merge upstream changes.
