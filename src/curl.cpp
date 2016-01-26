@@ -111,7 +111,7 @@ static string url_to_host(const std::string &url)
   }
 
   size_t idx;
-  if ((idx = host.find(':')) != string::npos || (idx = host.find('/')) != string::npos) {
+  if ((idx = host.find('/')) != string::npos) {
     return host.substr(0, idx);
   } else {
     return host;
@@ -123,7 +123,7 @@ static string get_bucket_host()
   if(!pathrequeststyle){
     return bucket + "." + url_to_host(host);
   }
-  return url_to_host(host) + "/" + bucket;
+  return url_to_host(host);
 }
 
 #if 0 // noused
@@ -514,7 +514,7 @@ bool S3fsCurl::InitMimeType(const char* MimeFile)
 // @param s e.g., "index.html"
 // @return e.g., "text/html"
 //
-string S3fsCurl::LookupMimeType(string name)
+string S3fsCurl::LookupMimeType(const string& name)
 {
   string result("application/octet-stream");
   string::size_type last_pos = name.find_last_of('.');
@@ -1456,7 +1456,16 @@ bool S3fsCurl::CreateCurlHandle(bool force)
     S3FS_PRN_ERR("Failed to create handle.");
     return false;
   }
-  type = REQTYPE_UNSET;
+
+  // [NOTE]
+  // If type is REQTYPE_IAMCRED, do not clear type.
+  // Because that type only uses HTTP protocol, then the special
+  // logic in ResetHandle function.
+  //
+  if(type != REQTYPE_IAMCRED){
+    type = REQTYPE_UNSET;
+  }
+
   ResetHandle();
 
   pthread_mutex_unlock(&S3fsCurl::curl_handles_lock);
@@ -1902,7 +1911,7 @@ int S3fsCurl::RequestPerform(void)
 // @param date e.g., get_date_rfc850()
 // @param resource e.g., "/pub"
 //
-string S3fsCurl::CalcSignatureV2(string method, string strMD5, string content_type, string date, string resource)
+string S3fsCurl::CalcSignatureV2(const string& method, const string& strMD5, const string& content_type, const string& date, const string& resource)
 {
   string Signature;
   string StringToSign;
@@ -1944,7 +1953,7 @@ string S3fsCurl::CalcSignatureV2(string method, string strMD5, string content_ty
   return Signature;
 }
 
-string S3fsCurl::CalcSignature(string method, string canonical_uri, string query_string, string strdate, string payload_hash, string date8601)
+string S3fsCurl::CalcSignature(const string& method, const string& canonical_uri, const string& query_string, const string& strdate, const string& payload_hash, const string& date8601)
 {
   string Signature, StringCQ, StringToSign;
   string uriencode;
@@ -1960,16 +1969,17 @@ string S3fsCurl::CalcSignature(string method, string canonical_uri, string query
   uriencode = urlEncode(canonical_uri);
   StringCQ  = method + "\n";
   if(0 == strcmp(method.c_str(),"HEAD") || 0 == strcmp(method.c_str(),"PUT") || 0 == strcmp(method.c_str(),"DELETE")){
-    StringCQ += uriencode + "\n" + query_string + "\n";
+    StringCQ += uriencode + "\n";
   }else if (0 == strcmp(method.c_str(), "GET") && 0 == strcmp(uriencode.c_str(), "")) {
-    StringCQ +="/\n\n";
+    StringCQ +="/\n";
   }else if (0 == strcmp(method.c_str(), "GET") && 0 == strncmp(uriencode.c_str(), "/", 1)) {
-    StringCQ += uriencode +"\n\n";
+    StringCQ += uriencode +"\n";
   }else if (0 == strcmp(method.c_str(), "GET") && 0 != strncmp(uriencode.c_str(), "/", 1)) {
     StringCQ += "/\n" + urlEncode2(canonical_uri) +"\n";
   }else if (0 == strcmp(method.c_str(), "POST")) {
-    StringCQ += uriencode +"\n" + query_string +"\n";
+    StringCQ += uriencode + "\n";
   }
+  StringCQ += urlEncode2(query_string) + "\n";
   StringCQ += get_canonical_headers(requestHeaders) + "\n";
   StringCQ += get_sorted_header_keys(requestHeaders) + "\n";
   StringCQ += payload_hash;
@@ -2072,6 +2082,7 @@ void S3fsCurl::insertV4Headers(const string &op, const string &path, const strin
   get_date_sigv3(strdate, date8601);
 
   string contentSHA256 = payload_hash.empty() ? empty_payload_hash : payload_hash;
+  const std::string realpath = pathrequeststyle ? "/" + bucket + path : path;
 
   //string canonical_headers, signed_headers;
   requestHeaders = curl_slist_sort_insert(requestHeaders, "host", get_bucket_host().c_str());
@@ -2079,7 +2090,7 @@ void S3fsCurl::insertV4Headers(const string &op, const string &path, const strin
   requestHeaders = curl_slist_sort_insert(requestHeaders, "x-amz-date", date8601.c_str());
 
   if(!S3fsCurl::IsPublicBucket()){
-    string Signature = CalcSignature(op, path, query_string, strdate, contentSHA256, date8601);
+    string Signature = CalcSignature(op, realpath, query_string, strdate, contentSHA256, date8601);
     string auth = "AWS4-HMAC-SHA256 Credential=" + AWSAccessKeyId + "/" + strdate + "/" + endpoint +
         "/s3/aws4_request, SignedHeaders=" + get_sorted_header_keys(requestHeaders) + ", Signature=" + Signature;
     requestHeaders = curl_slist_sort_insert(requestHeaders, "Authorization", auth.c_str());
@@ -2722,7 +2733,7 @@ int S3fsCurl::ListBucketRequest(const char* tpath, const char* query)
     }
 
   }else{
-    insertV4Headers("GET", query, "", "");
+    insertV4Headers("GET", "/", query, "");
   }
 
   // setopt
@@ -3079,7 +3090,7 @@ int S3fsCurl::AbortMultipartUpload(const char* tpath, string& upload_id)
 // Authorization: AWS VGhpcyBtZXNzYWdlIHNpZ25lZGGieSRlbHZpbmc=
 //
 
-int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& upload_id)
+int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, const string& upload_id)
 {
   S3FS_PRN_INFO3("[tpath=%s][start=%jd][size=%zd][part=%d]", SAFESTRPTR(tpath), (intmax_t)(partdata.startpos), partdata.size, part_num);
 
@@ -3158,7 +3169,7 @@ int S3fsCurl::UploadMultipartPostSetup(const char* tpath, int part_num, string& 
   return 0;
 }
 
-int S3fsCurl::UploadMultipartPostRequest(const char* tpath, int part_num, string& upload_id)
+int S3fsCurl::UploadMultipartPostRequest(const char* tpath, int part_num, const string& upload_id)
 {
   int result;
 
@@ -3393,7 +3404,7 @@ int S3fsCurl::MultipartUploadRequest(const char* tpath, headers_t& meta, int fd,
   return 0;
 }
 
-int S3fsCurl::MultipartUploadRequest(string upload_id, const char* tpath, int fd, off_t offset, size_t size, etaglist_t& list)
+int S3fsCurl::MultipartUploadRequest(const string& upload_id, const char* tpath, int fd, off_t offset, size_t size, etaglist_t& list)
 {
   S3FS_PRN_INFO3("[upload_id=%s][tpath=%s][fd=%d][offset=%jd][size=%jd]", upload_id.c_str(), SAFESTRPTR(tpath), fd, (intmax_t)offset, (intmax_t)size);
 

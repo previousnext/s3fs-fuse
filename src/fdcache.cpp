@@ -619,7 +619,7 @@ FdEntity::FdEntity(const char* tpath, const char* cpath)
   try{
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE_NP);   // recursive mutex
+    pthread_mutexattr_settype(&attr, S3FS_MUTEX_RECURSIVE);   // recursive mutex
     pthread_mutex_init(&fdent_lock, &attr);
     is_lock_init = true;
   }catch(exception& e){
@@ -802,17 +802,6 @@ int FdEntity::Open(headers_t* pmeta, ssize_t size, time_t time)
     }
   }
 
-  // set mtime
-  if(-1 != time){
-    if(0 != SetMtime(time)){
-      S3FS_PRN_ERR("failed to set mtime. errno(%d)", errno);
-      fclose(pfile);
-      pfile = NULL;
-      fd    = -1;
-      return (0 == errno ? -EIO : -errno);
-    }
-  }
-
   // reset cache stat file
   if(need_save_csf){
     CacheFileStat cfstat(path.c_str());
@@ -832,6 +821,17 @@ int FdEntity::Open(headers_t* pmeta, ssize_t size, time_t time)
   }else{
     orgmeta.clear();
     size_orgmeta = 0;
+  }
+
+  // set mtime(set "x-amz-meta-mtime" in orgmeta)
+  if(-1 != time){
+    if(0 != SetMtime(time)){
+      S3FS_PRN_ERR("failed to set mtime. errno(%d)", errno);
+      fclose(pfile);
+      pfile = NULL;
+      fd    = -1;
+      return (0 == errno ? -EIO : -errno);
+    }
   }
 
   return 0;
@@ -1448,7 +1448,7 @@ ssize_t FdEntity::Read(char* bytes, off_t start, size_t size, bool force_load)
     // load size(for prefetch)
     size_t load_size = size;
     if(static_cast<size_t>(start + size) < pagelist.Size()){
-      size_t prefetch_max_size = max(size, static_cast<size_t>(S3fsCurl::GetMultipartSize()));
+      size_t prefetch_max_size = max(size, static_cast<size_t>(S3fsCurl::GetMultipartSize() * S3fsCurl::GetMaxParallelCount()));
 
       if(static_cast<size_t>(start + prefetch_max_size) < pagelist.Size()){
         load_size = prefetch_max_size;
@@ -1684,13 +1684,13 @@ size_t FdManager::SetEnsureFreeDiskSpace(size_t size)
   size_t old = FdManager::free_disk_space;
   if(0 == size){
     if(0 == FdManager::free_disk_space){
-      FdManager::free_disk_space = static_cast<size_t>(S3fsCurl::GetMultipartSize());
+      FdManager::free_disk_space = static_cast<size_t>(S3fsCurl::GetMultipartSize() * S3fsCurl::GetMaxParallelCount());
     }
   }else{
     if(0 == FdManager::free_disk_space){
-      FdManager::free_disk_space = max(size, static_cast<size_t>(S3fsCurl::GetMultipartSize()));
+      FdManager::free_disk_space = max(size, static_cast<size_t>(S3fsCurl::GetMultipartSize() * S3fsCurl::GetMaxParallelCount()));
     }else{
-      if(static_cast<size_t>(S3fsCurl::GetMultipartSize()) <= size){
+      if(static_cast<size_t>(S3fsCurl::GetMultipartSize() * S3fsCurl::GetMaxParallelCount()) <= size){
         FdManager::free_disk_space = size;
       }
     }
@@ -1846,19 +1846,19 @@ FdEntity* FdManager::Open(const char* path, headers_t* pmeta, ssize_t size, time
   return ent;
 }
 
-FdEntity* FdManager::ExistOpen(const char* path, int existfd)
+FdEntity* FdManager::ExistOpen(const char* path, int existfd, bool ignore_existfd)
 {
-  S3FS_PRN_DBG("[path=%s][fd=%d]", SAFESTRPTR(path), existfd);
+  S3FS_PRN_DBG("[path=%s][fd=%d][ignore_existfd=%s]", SAFESTRPTR(path), existfd, ignore_existfd ? "true" : "false");
 
   // search by real path
   FdEntity* ent = Open(path, NULL, -1, -1, false, false);
 
-  if(!ent && -1 != existfd){
+  if(!ent && (ignore_existfd || (-1 != existfd))){
     // search from all fdentity because of not using cache.
     AutoLock auto_lock(&FdManager::fd_manager_lock);
 
     for(fdent_map_t::iterator iter = fent.begin(); iter != fent.end(); ++iter){
-      if((*iter).second && (*iter).second->GetFd() == existfd && (*iter).second->IsOpen()){
+      if((*iter).second && (*iter).second->IsOpen() && (ignore_existfd || ((*iter).second->GetFd() == existfd))){
         // found opend fd in map
         if(0 == strcmp((*iter).second->GetPath(), path)){
           ent = (*iter).second;

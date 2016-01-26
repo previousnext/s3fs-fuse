@@ -88,7 +88,6 @@ typedef std::list<UNCOMP_MP_INFO> uncomp_mp_list_t;
 bool foreground                   = false;
 bool nomultipart                  = false;
 bool pathrequeststyle             = false;
-bool is_specified_endpoint        = false;
 std::string program_name;
 std::string service_path          = "/";
 std::string host                  = "http://s3.amazonaws.com";
@@ -122,6 +121,8 @@ static bool is_s3fs_umask         = false;// default does not set.
 static bool is_remove_cache       = false;
 static bool create_bucket         = false;
 static int64_t singlepart_copy_limit = FIVE_GB;
+static bool is_specified_endpoint = false;
+static int s3fs_init_deferred_exit_status = 0;
 
 //-------------------------------------------------------------------
 // Static functions : prototype
@@ -142,7 +143,7 @@ static S3fsCurl* multi_head_retry_callback(S3fsCurl* s3fscurl);
 static int readdir_multi_head(const char* path, S3ObjList& head, void* buf, fuse_fill_dir_t filler);
 static int list_bucket(const char* path, S3ObjList& head, const char* delimiter, bool check_content_only = false);
 static int directory_empty(const char* path);
-static bool is_truncated(xmlDocPtr doc);;
+static bool is_truncated(xmlDocPtr doc);
 static int append_objects_from_xml_ex(const char* path, xmlDocPtr doc, xmlXPathContextPtr ctx, 
               const char* ex_contents, const char* ex_key, const char* ex_etag, int isCPrefix, S3ObjList& head);
 static int append_objects_from_xml(const char* path, xmlDocPtr doc, S3ObjList& head);
@@ -774,7 +775,7 @@ static int put_headers(const char* path, headers_t& meta, bool is_copy)
   }
 
   FdEntity* ent = NULL;
-  if(NULL == (ent = FdManager::get()->ExistOpen(path))){
+  if(NULL == (ent = FdManager::get()->ExistOpen(path, -1, !(FdManager::get()->IsCacheDir())))){
     // no opened fd
     if(FdManager::get()->IsCacheDir()){
       // create cache file if be needed
@@ -2074,7 +2075,7 @@ static int s3fs_read(const char* path, char* buf, size_t size, off_t offset, str
   // check real file size
   size_t realsize = 0;
   if(!ent->GetSize(realsize) || realsize <= 0){
-    S3FS_PRN_ERR("file size is 0, so break to read.");
+    S3FS_PRN_DBG("file size is 0, so break to read.");
     FdManager::get()->Close(ent);
     return 0;
   }
@@ -2168,6 +2169,9 @@ static int s3fs_fsync(const char* path, int datasync, struct fuse_file_info* fi)
     FdManager::get()->Close(ent);
   }
   S3FS_MALLOCTRIM(0);
+
+  // Issue 320: Delete stat cache entry because st_size may have changed.
+  StatCache::getStatCacheData()->DelStat(path);
 
   return result;
 }
@@ -2491,7 +2495,7 @@ static int list_bucket(const char* path, S3ObjList& head, const char* delimiter,
   return 0;
 }
 
-const char* c_strErrorObjectName = "FILE or SUBDIR in DIR";
+static const char* c_strErrorObjectName = "FILE or SUBDIR in DIR";
 
 static int append_objects_from_xml_ex(const char* path, xmlDocPtr doc, xmlXPathContextPtr ctx, 
        const char* ex_contents, const char* ex_key, const char* ex_etag, int isCPrefix, S3ObjList& head)
@@ -3051,7 +3055,7 @@ static int s3fs_getxattr(const char* path, const char* name, char* value, size_t
     return -EIO;
   }
 
-#if (__APPLE__)
+#if defined(__APPLE__)
   if (position != 0) {
     // No resource fork support
     return -EINVAL;
@@ -3291,6 +3295,19 @@ static int s3fs_removexattr(const char* path, const char* name)
 
   return 0;
 }
+   
+// s3fs_init calls this function to exit cleanly from the fuse event loop.
+//
+// There's no way to pass an exit status to the high-level event loop API, so 
+// this function stores the exit value in a global for main()
+static void s3fs_exit_fuseloop(int exit_status) {
+    S3FS_PRN_ERR("Exiting FUSE event loop due to errors\n");
+    s3fs_init_deferred_exit_status = exit_status;
+    struct fuse_context *ctx = fuse_get_context();
+    if (NULL != ctx) {
+        fuse_exit(ctx->fuse);
+    }
+}
 
 static void* s3fs_init(struct fuse_conn_info* conn)
 {
@@ -3299,13 +3316,15 @@ static void* s3fs_init(struct fuse_conn_info* conn)
   // ssl init
   if(!s3fs_init_global_ssl()){
     S3FS_PRN_CRIT("could not initialize for ssl libraries.");
-    exit(EXIT_FAILURE);
+    s3fs_exit_fuseloop(EXIT_FAILURE);
+    return NULL;
   }
 
   // init curl
   if(!S3fsCurl::InitS3fsCurl("/etc/mime.types")){
     S3FS_PRN_CRIT("Could not initiate curl library.");
-    exit(EXIT_FAILURE);
+    s3fs_exit_fuseloop(EXIT_FAILURE);
+    return NULL;
   }
 
   if (create_bucket){
@@ -3318,7 +3337,8 @@ static void* s3fs_init(struct fuse_conn_info* conn)
   if(!S3fsCurl::IsPublicBucket()){
     int result;
     if(EXIT_SUCCESS != (result = s3fs_check_service())){
-      exit(result);
+      s3fs_exit_fuseloop(result);
+      return NULL;
     }
   }
 
